@@ -9,6 +9,7 @@ from keras.layers import Input,Conv2D,Conv2DTranspose,Dense,Reshape,Dropout,UpSa
 from keras.layers.advanced_activations import LeakyReLU
 from keras.models import Model, Sequential
 from keras.optimizers import Adam
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 from keras import losses
 from keras.utils import to_categorical
