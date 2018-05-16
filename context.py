@@ -1,43 +1,59 @@
 """
-Implementation of the autoencoder model of Context Encoder
+Implementation of Context Encoder using cifar10 images
 """
 
 import keras
+from keras import losses
 from keras.datasets import cifar10
 from keras.layers import Activation,BatchNormalization,Flatten,MaxPooling2D,ZeroPadding2D
 from keras.layers import Input,Conv2D,Conv2DTranspose,Dense,Reshape,Dropout,UpSampling2D
 from keras.layers.advanced_activations import LeakyReLU
 from keras.models import Model, Sequential
 from keras.optimizers import Adam
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-
-from keras import losses
 from keras.utils import to_categorical
 import keras.backend as K
 import matplotlib.pyplot as plt
-import numpy as np
 
-#lr_scheduler
+from scipy import misc
+import numpy as np
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
+def compute_mse(a,b):
+    A = a.flatten()
+    B = b.flatten()
+    mse = mean_squared_error(A,B)
+    return mse
+
+def compute_ssim(a,b):
+    ssim = []
+    num_imgs = a.shape[0]
+    for i in range(num_imgs):
+        ssim.append( SSIM(a[i],b[i],
+                      data_range=(1-(-1)),
+                      multichannel=True))
+
+    # dssim
+    return ( 1 - np.array(ssim).mean() ) / 2
+
 class CEncoder():
     def __init__(self):
-        self.img_rows = 32
-        self.img_cols = 32
-        self.mask_height = 16
-        self.mask_width = 16
+        self.img_rows = 128
+        self.img_cols = 128
+        self.mask_height = 64
+        self.mask_width = 64
         self.channels = 3
         self.img_shape = (self.img_rows, self.img_cols, self.channels)
         self.patch_shape = (self.mask_height,self.mask_width,self.channels)
-        self.overlap = 3
+        self.overlap = 7
 
-        lambda_recon = 0.5
-        lambda_adv = 0.5
+        lambda_recon = 0.999
+        lambda_adv = 0.001
         optimizer_recon = Adam(lr=2e-3, beta_1=0.5,decay=1e-2)
         optimizer_adv = Adam(lr=2e-3, beta_1=0.5,decay=1e-3)
 
-
-        self.gf = 32
-        self.df = 16 # masked patch size
-
+        self.gf = 64
+        self.df = 64 # masked patch size
 
         # Construct autoencoder
         self.autoencoder = self.build_autoencoder()
@@ -95,20 +111,19 @@ class CEncoder():
         input = Input(shape=self.img_shape)
 
         y = conv_bn_relu_pool(input,filters=self.gf,activation='lrelu')
+        y = conv_bn_relu_pool(y,filters=self.gf,activation='lrelu')
         y = conv_bn_relu_pool(y,filters=self.gf*2,activation='lrelu')
         y = conv_bn_relu_pool(y,filters=self.gf*4,activation='lrelu')
-        #y = conv_bn_relu_pool(y,filters=self.gf*8,activation='relu')
-        #y = conv_bn_relu_pool(y,filters=self.gf*16,activation='relu')
-        latent = conv_bn_relu_pool(y,filters=1000,stride=1,pad='valid',activation='lrelu') # increase to 4000
+        y = conv_bn_relu_pool(y,filters=self.gf*8,activation='relu')
+        latent = conv_bn_relu_pool(y,filters=4000,stride=1,pad='valid',activation='lrelu') # increase to 4000
         latent = Dropout(0.5)(latent)
 
-        y = deconv_bn_relu(latent,filters=self.df*4,stride=1,pad='valid',activation='relu')
-        #y = deconv_bn_relu(y,filters=self.df*8,activation='relu')
-        #y = deconv_bn_relu(latent,filters=self.df*4,activation='relu')
+        y = deconv_bn_relu(latent,filters=self.df*8,stride=1,pad='valid',activation='relu')
+        y = deconv_bn_relu(y,filters=self.df*4,activation='relu')
         y = deconv_bn_relu(y,filters=self.df*2,activation='relu')
         y = deconv_bn_relu(y,filters=self.df,activation='relu')
 
-        output = Conv2DTranspose(3,kernel_size=4,padding='same')(y)
+        output = Conv2DTranspose(3,kernel_size=4,strides=2,padding='same')(y)
         ouptut = Activation('tanh')(output)
 
         model = Model(input,output)
@@ -118,7 +133,7 @@ class CEncoder():
     def build_discriminator(self):
         def conv_bn_relu_pool(input_layer,filters,kernel_size=4,stride=2,pad='same',activation='relu'):
             y = Conv2D(filters,kernel_size=kernel_size,
-                                strides=(stride,stride),padding=pad)(input_layer)
+                        strides=stride,padding=pad)(input_layer)
             if activation=='relu':
                 y = Activation('relu')(y)
             elif activation=='lrelu':
@@ -131,10 +146,10 @@ class CEncoder():
             return output
 
         patch = Input(shape=self.patch_shape)
-        y = conv_bn_relu_pool(patch,filters=64,activation='lrelu')
-        y = conv_bn_relu_pool(y,filters=128,activation='lrelu')
-        y = conv_bn_relu_pool(y,filters=256,activation='lrelu')
-        y = conv_bn_relu_pool(y,filters=512,activation='lrelu')
+        y = conv_bn_relu_pool(patch,filters=self.df,activation='lrelu')
+        y = conv_bn_relu_pool(y,filters=self.df*2,activation='lrelu')
+        y = conv_bn_relu_pool(y,filters=self.df*4,activation='lrelu')
+        y = conv_bn_relu_pool(y,filters=self.df*8,activation='lrelu')
 
         y = Flatten()(y)
         validity = Dense(1,activation='sigmoid')(y) # review activation here
@@ -173,12 +188,20 @@ class CEncoder():
         X_dogs = X_train[(y_train == 5).flatten()]
         X_train = np.vstack((X_cats, X_dogs))
 
+        # Rescale possible rescale
+        X_train = np.array([misc.imresize(x, [self.img_rows, self.img_cols]) for x in X_train]) # resize to (128,128)
+
         # Rescale -1 to 1
-        X_train = X_train / 255
-        X_train = 2 * X_train - 1
+        X_train = X_train.astype('float32') / 255.0
+        X_train = (2 * X_train) - 1
         y_train = y_train.reshape(-1, 1)
 
         half_batch = int(batch_size / 2)
+
+        batch_count = X_train.shape[0]//batch_size
+        print('Epochs:', epochs)
+        print('Batch size:', batch_size)
+        print('Batch count:', batch_count)
 
         for epoch in range(epochs):
             # ---------------------
@@ -206,7 +229,7 @@ class CEncoder():
             #  Train Generator
             # ---------------------
 
-            # Select a random half batch of images
+            # Select a random batch of images
             idx = np.random.randint(0, X_train.shape[0], batch_size)
             imgs = X_train[idx]
 
@@ -219,7 +242,7 @@ class CEncoder():
             g_loss = self.combined.train_on_batch(masked_imgs, [missing_parts, valid])
 
             # Plot the progress
-            print ("%d [D loss: %f, acc: %.2f%%] [G loss: %f, mse: %f, acc: %.2f%%]" % (epoch, d_loss[0], 100*d_loss[1], g_loss[0], g_loss[1], 100*g_loss[3]))
+            print ("%d [D loss: %f, acc: %.2f%%] [G loss: %f, mse: %f, acc: %.2f%%]" % (epoch, d_loss[0], 100*d_loss[1], g_loss[0], g_loss[1], 100*g_loss[4]))
 
             # If at save interval => save generated image samples
             if epoch % sample_interval == 0:
@@ -227,6 +250,7 @@ class CEncoder():
                 idx = np.random.randint(0, X_train.shape[0], 6)
                 imgs = X_train[idx]
                 self.sample_images(epoch, imgs)
+                self.save_model(epoch)
 
     def sample_images(self, epoch, imgs):
         r, c = 3, 6
@@ -238,8 +262,7 @@ class CEncoder():
         masked_imgs = 0.5 * masked_imgs + 0.5
         gen_missing = 0.5 * gen_missing + 0.5
 
-        gen_missing = np.where(gen_missing < 0, 0, gen_missing)
-
+        gen_missing = np.clip(gen_missing,0,1)
 
         fig, axs = plt.subplots(r, c)
         for i in range(c):
@@ -254,20 +277,42 @@ class CEncoder():
         fig.savefig("images/cifar_%d.png" % epoch)
         plt.close()
 
-    def save_model(self):
-
-        def save(model, model_name):
+    def save_model(self,epoch):
+        """ save the weights and architecture """
+        def save(model, model_name,epoch):
             model_path = "saved_model/%s.json" % model_name
-            weights_path = "saved_model/%s_weights.hdf5" % model_name
+            weights_path = "saved_model/%s_weights.%s.hdf5" % (model_name,str(epoch))
             options = {"file_arch": model_path,
                         "file_weight": weights_path}
             json_string = model.to_json()
             open(options['file_arch'], 'w').write(json_string)
             model.save_weights(options['file_weight'])
 
-        save(self.autoencoder, "context_encoder_generator")
-        save(self.discriminator, "context_encoder_discriminator")
+        save(self.autoencoder, "context_generator",epoch=epoch)
+        save(self.discriminator, "context_discriminator", epoch=0)
+
+    def load_model(self,arch,weights):
+        """ load the weights and architecture of model """
+        json_file = open(arch, 'r')
+        loaded_model_json = json_file.read()
+        json_file.close()
+        self.model = model_from_json(loaded_model_json)
+        self.model.load_weights(weights)
 
 if __name__ == '__main__':
     ce = CEncoder()
-    ce.train(epochs=30000, batch_size=64, sample_interval=50)
+    MODE = 'train'
+    ARCH = './saved_model/ccgan_generator.json'
+    WEIGHTS = './saved_model/ccgan_generator_weights.220.hdf5'
+    mode = {'train': 0,
+            'test': 1,
+            'predict': 2}
+
+    if mode[MODE] == 0:
+        ce.train(epochs=30000, batch_size=32, sample_interval=50)
+
+    elif mode[MODE] == 1:
+        pass
+
+    elif mode[MODE] == 2:
+        pass
