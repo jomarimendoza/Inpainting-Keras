@@ -11,14 +11,16 @@ To execute the training the following code should be run.
 ```python
 python context.py
 ```
-*Example*
+**Example**
+
 ![](sample_images/context.jpg)
-and
+
 
 ```python
 python ccgan.py
 ```
-*Example*
+**Example**
+
 ![](sample_images/ccgan.jpg)
 
 **NOTE:** For the generator a low resolution image is concatenated within the network
