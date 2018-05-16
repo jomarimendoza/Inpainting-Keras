@@ -29,4 +29,5 @@ This project uses CIFAR10 data with only *cats and dogs* to reduce number of sam
 
 # References
 [1] [Context Encoders: Feature Learning by Inpainting](https://people.eecs.berkeley.edu/~pathak/papers/cvpr16.pdf)
+
 [2] [Semi-Supervised Learning with Context-Conditional Generative Adversarial Networks](https://arxiv.org/abs/1611.06430)
