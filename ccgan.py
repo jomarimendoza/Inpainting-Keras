@@ -161,8 +161,8 @@ class CCGAN():
         y = deconv_bn_relu(y,filters=self.df*2,activation='relu')
         y = deconv_bn_relu(y,filters=self.df,activation='relu')
 
-        output_img = Conv2DTranspose(filters=self.channels, kernel_size=4, strides=2, padding='same')(y)
-        ouptut_img = Activation('tanh')(output_img)
+        y = Conv2DTranspose(filters=self.channels, kernel_size=4, strides=2, padding='same')(y)
+        output_img = Activation('tanh')(y)
 
         layer_patch =  Multiply()([img,revmask])
         layer_notPatch = Multiply()([output_img,mask])
