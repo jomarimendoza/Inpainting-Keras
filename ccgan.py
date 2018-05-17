@@ -30,9 +30,13 @@ import numpy as np
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
+MEAN_VIGNET_TRAIN = np.array([8.25, 7.66, 6.855])
+MEAN_VIGNET_TRAIN_NORM = (MEAN_VIGNET_TRAIN) / 255.0
+MEAN_VIGNET_TRAIN_NORM = (2 * MEAN_VIGNET_TRAIN_NORM) - 1
+
 def compute_mse(a,b):
-    A = a.flatten()
-    B = b.flatten()
+    A = a.astype('float32').flatten()
+    B = b.astype('float32').flatten()
     mse = mean_squared_error(A,B)
     return mse
 
@@ -40,9 +44,10 @@ def compute_ssim(a,b):
     ssim = []
     num_imgs = a.shape[0]
     for i in range(num_imgs):
-        ssim.append( SSIM(a[i],b[i],
-                      data_range=(1-(-1)),
-                      multichannel=True))
+        ssim.append( SSIM(a[i].astype('float32'),
+                          b[i].astype('float32'),
+                          data_range=(1-(-1)),
+                          multichannel=True))
 
     # dssim
     return ( 1 - np.array(ssim).mean() ) / 2
@@ -58,6 +63,7 @@ class CCGAN():
         self.img_shape = (self.img_rows, self.img_cols, self.channels)
         self.img_LR_shape = (self.img_rows//4, self.img_cols//4, self.channels)
         self.LR_input = False # SET IF YOU WANT THE LOW RES CONDITION TO BE TRUE
+        SHOW_SUMMARY = False
 
         # Number of filters in first layer of generator and discriminator
         self.gf = 64
@@ -71,7 +77,7 @@ class CCGAN():
         # Build and compile the discriminator
         self.discriminator = self.build_discriminator()
         self.discriminator.compile(loss=['binary_crossentropy', 'categorical_crossentropy'],
-            loss_weights=[0.5, 0.5],
+            loss_weights=[0.999, 0.001],
             optimizer=optimizer_adv,
             metrics=['accuracy'])
 
@@ -84,9 +90,9 @@ class CCGAN():
         boolean_mask_reverse = Input(shape=self.img_shape)
         if self.LR_input:
             LR_img = Input(shape=self.img_LR_shape)
-            _, gen_img = self.generator([masked_img,boolean_mask,boolean_mask_reverse,LR_img])
+            gen_img_nonpatch, gen_img = self.generator([masked_img,boolean_mask,boolean_mask_reverse,LR_img])
         else:
-            _, gen_img = self.generator([masked_img,boolean_mask,boolean_mask_reverse])
+            gen_img_nonpatch, gen_img = self.generator([masked_img,boolean_mask,boolean_mask_reverse])
 
         # For the combined model we will only train the generator
         self.discriminator.trainable = False
@@ -98,11 +104,17 @@ class CCGAN():
         if self.LR_input:
             self.combined = Model([masked_img,boolean_mask,boolean_mask_reverse,LR_img], [gen_img, valid])
         else:
-            self.combined = Model([masked_img,boolean_mask,boolean_mask_reverse], [gen_img, valid])
+            self.combined = Model([masked_img,boolean_mask,boolean_mask_reverse], [gen_img_nonpatch, valid])
         self.combined.compile(loss=['mse','binary_crossentropy'],
             loss_weights=[lambda_recon, lambda_adv],
             optimizer=optimizer_recon,
             metrics=['accuracy'])
+
+        if SHOW_SUMMARY:
+            print('DISCRIMINATOR')
+            self.discriminator.summary()
+            print('GENERATOR')
+            self.generator.summary()
 
     def build_generator(self):
         """Create generator model"""
@@ -161,8 +173,8 @@ class CCGAN():
         y = deconv_bn_relu(y,filters=self.df*2,activation='relu')
         y = deconv_bn_relu(y,filters=self.df,activation='relu')
 
-        output_img = Conv2DTranspose(filters=self.channels, kernel_size=4, strides=2, padding='same')(y)
-        ouptut_img = Activation('tanh')(output_img)
+        y = Conv2DTranspose(filters=self.channels, kernel_size=4, strides=2, padding='same')(y)
+        output_img = Activation('tanh')(y)
 
         layer_patch =  Multiply()([img,revmask])
         layer_notPatch = Multiply()([output_img,mask])
@@ -173,8 +185,6 @@ class CCGAN():
         else:
             model = Model([img, mask, revmask], [output_img,patched_img])
 
-        print("GENERATOR")
-        model.summary()
         return model
 
     def build_discriminator(self):
@@ -223,8 +233,6 @@ class CCGAN():
         label = Dense(self.num_classes, activation="softmax",name='label')(label)
 
         model = Model(img, [validity, label])
-        print("DISCRIMINATOR")
-        model.summary()
         return model
 
     """ Insert a random mask in the image """
@@ -253,34 +261,30 @@ class CCGAN():
 
         #create array with random numbers with same shape as imgs
         masked_imgs = np.empty_like(imgs)
+        missing_parts = np.empty((imgs.shape[0], self.mask_height, self.mask_width, self.channels))
         boolean_masks = np.zeros_like(imgs).astype('bool')
         for i, img in enumerate(imgs):
             masked_img = img.copy()
             boolean_mask_img = np.zeros_like(img).astype('bool')
-            _y1, _y2, _x1, _x2 = y1[i], y2[i], x1[i], x2[i],
-            masked_img[_y1:_y2, _x1:_x2, :] = 0            # middle, normalized [-1,1]
+            _y1, _y2, _x1, _x2 = y1[i], y2[i], x1[i], x2[i]
+            missing_parts[i] = masked_img[_y1:_y2, _x1:_x2, :].copy()
+            masked_img[_y1:_y2, _x1:_x2, 0] = MEAN_VIGNET_TRAIN_NORM[0]
+            masked_img[_y1:_y2, _x1:_x2, 1] = MEAN_VIGNET_TRAIN_NORM[1]
+            masked_img[_y1:_y2, _x1:_x2, 2] = MEAN_VIGNET_TRAIN_NORM[2]
             boolean_mask_img[_y1:_y2, _x1:_x2, :] = True   # True at patch
 
             # batch of images and masks
             masked_imgs[i] = masked_img
             boolean_masks[i] = boolean_mask_img
 
-        return masked_imgs, boolean_masks, mask_coordinates
+        return masked_imgs, boolean_masks, missing_parts
 
     def train(self, epochs, batch_size=32, sample_interval=50):
-        # Load the dataset
-        (X_train, y_train), (X_test, y_test) = cifar10.load_data()
-
-        X_train = np.vstack((X_train, X_test))
-        y_train = np.vstack((y_train, y_test))
-
-        # Extract dogs and cats
-        X_cats = X_train[(y_train == 3).flatten()]
-        X_dogs = X_train[(y_train == 5).flatten()]
-        X_train = np.vstack((X_cats, X_dogs))
-        y_cats = np.zeros(X_cats.shape[0])
-        y_dogs = np.ones(X_dogs.shape[0])
-        y_train = np.vstack((y_cats, y_dogs))
+        print("Loading data ...")
+        PATH_TO_DATA = '/media/jomari/HDD/VIGNET/inpainting/train/npz/train.npz'
+        vignet = np.load(PATH_TO_DATA)
+        X_train = vignet['images']
+        y_train = vignet['labels']
 
         # Rescale possible rescale
         X_train = np.array([scipy.misc.imresize(x, [self.img_rows, self.img_cols]) for x in X_train]) # resize to (128,128)
@@ -295,6 +299,8 @@ class CCGAN():
         print('Epochs:', epochs)
         print('Batch size:', batch_size)
         print('Batch count:', batch_count)
+        prev_mse = 1e10
+        sample_interval_epoch = sample_interval*4
         for epoch in range(epochs):
             # ---------------------
             #  Train Discriminator
@@ -307,7 +313,7 @@ class CCGAN():
 
             LR_imgs = np.array([scipy.misc.imresize(x, [self.img_rows//4, self.img_cols//4]) for x in imgs])
 
-            masked_imgs, boolean_masks, mask_coordinates = self.mask_randomly(imgs,random=True)
+            masked_imgs, boolean_masks, _ = self.mask_randomly(imgs,random=True)
             boolean_inverted = np.invert(boolean_masks)
 
             # Generate a half batch of new images (try loading generator weights here)
@@ -315,7 +321,6 @@ class CCGAN():
                 _,gen_imgs = self.generator.predict([masked_imgs,boolean_masks,boolean_inverted,LR_imgs])
             else:
                 _,gen_imgs = self.generator.predict([masked_imgs,boolean_masks,boolean_inverted])
-
 
             valid = np.ones((half_batch,1))
             fake = np.zeros((half_batch,1))
@@ -327,7 +332,6 @@ class CCGAN():
             comb_labels = np.concatenate([labels,labels],axis=0)
 
             # patch cropped part of image
-            mask_coordinates = mask_coordinates
             comb_imgs = np.concatenate([imgs,gen_imgs],axis=0)
 
             # Shuffle data again here
@@ -349,7 +353,7 @@ class CCGAN():
             imgs = X_train[idx]
 
             LR_imgs = np.array([scipy.misc.imresize(x, [self.img_rows//4, self.img_cols//4]) for x in imgs])
-            masked_imgs, boolean_masks, mask_coordinates = self.mask_randomly(imgs,random=True)
+            masked_imgs, boolean_masks, _ = self.mask_randomly(imgs,random=True)
             boolean_inverted = np.invert(boolean_masks)
 
             # Generator wants the discriminator to label the generated images as valid
@@ -370,21 +374,118 @@ class CCGAN():
                 idx = np.random.randint(0, X_train.shape[0], 6)
                 imgs = X_train[idx]
                 self.sample_images(epoch, imgs)
+
+            if epoch % sample_interval_epoch == 0:
                 self.save_model(epoch)
 
-    def test(self, batch_size=10, arch='ccgan.json', weights='ccgan.hdf5'):
+    def test(self, batch_size=10, vehicle='car', arch='a.json', weights='a.hdf5'):
         """ Produce same images (patch places) in data """
-        pass
+        PATH_TO_DATA = './wpatch/' + vehicle + '_wpatch.test.npz'
+        vignet = np.load(PATH_TO_DATA)
+        X_test_gt = vignet['gt']
+        X_test_crops = vignet['crops']
+        xcoor_test = vignet['xs']
+        ycoor_test = vignet['ys']
 
-    def predict(self,arch='ccgan.json', weights='ccgan.hdf5'):
-        pass
+        # Rescale possible rescale
+        X_test_gt = np.array([scipy.misc.imresize(x, [self.img_rows, self.img_cols]) for x in X_test_gt]) # resize to (128,128)
+
+        # Rescale -1 to 1
+        X_test_crops = X_test_crops.astype('float32') / 255.0
+        X_test_crops = (2 * X_test_crops) - 1
+        X_test_gt = X_test_gt.astype('float32') / 255.0
+        X_test_gt = (2 * X_test_gt) - 1
+
+        # load the model
+        file_arch = './context/saved_model/context_generator.json'
+        file_weights = './context/saved_model/context_generator_weights.29700.hdf5'
+        self.load_model(arch, weights)
+
+        num_images = X_test_gt.shape[0]
+        batch_count = num_images//batch_size
+        batches = np.array_split(np.arange(num_images),batch_count)
+        mse_image = []
+        ssim_image = []
+        mse_patch = []
+        ssim_patch = []
+        for i,batch in enumerate(batches):
+            percent_complete = (i/batch_count) * 100
+
+            imgs_alpha = X_test_gt[batch]
+            corners = (ycoor_test[batch], xcoor_test[batch])
+            crops = X_test_crops[batch,:,:,:3]
+            gen_missing = np.empty_like(crops)
+
+            gen_imgs_alpha = imgs_alpha.copy()
+            masked_imgs, boolean_masks, _ = self.mask_randomly(imgs_alpha[:,:,:,:3],
+                                    random=False,corner=corners)
+            boolean_inverted = np.invert(boolean_masks)
+
+            _,gen_imgs = self.model.predict([masked_imgs,boolean_masks,boolean_inverted])
+
+            for j in range(len(batch)):
+                gen_missing[j] = gen_imgs[j,corners[0][j]:corners[0][j]+64,
+                                            corners[1][j]:corners[1][j]+64,:]
+
+            gen_imgs_alpha[:,:,:,:3] = gen_imgs
+
+            scipy.misc.imsave('images_test/sample-%s.png'%i,gen_imgs_alpha[0])
+
+            mse_image.append(compute_mse(gen_imgs_alpha[:,:,:,:3], imgs_alpha[:,:,:,:3]))
+            ssim_image.append(compute_ssim(gen_imgs_alpha[:,:,:,:3], imgs_alpha[:,:,:,:3]))
+            mse_patch.append(compute_mse(gen_missing, crops))
+            ssim_patch.append(compute_ssim(gen_missing, crops))
+
+            print(' Test completed: ', "{0:.5f}%".format(percent_complete), end="\r")
+
+        print(' ')
+        print( "MSE (image): ",np.array(mse_image).mean()  )
+        print( "SSIM(image): ",np.array(ssim_image).mean() )
+        print( "MSE (patch): ",np.array(mse_patch).mean()  )
+        print( "SSIM(patch): ",np.array(ssim_patch).mean() )
+
+    def predict(self,vehicle='car', arch='a.json', weights='a.hdf5',idx=1):
+        PATH_TO_DATA = './wpatch/' + vehicle + '_wpatch.test.npz'
+        vignet = np.load(PATH_TO_DATA)
+        X_test_gt = vignet['gt']
+        xcoor_test = vignet['xs']
+        ycoor_test = vignet['ys']
+        # Rescale possible rescale
+        X_test_gt = np.array([scipy.misc.imresize(x, [self.img_rows, self.img_cols]) for x in X_test_gt]) # resize to (128,128)
+
+        # Rescale -1 to 1
+        X_test_gt = X_test_gt.astype('float32') / 255.0
+        X_test_gt = (2 * X_test_gt) - 1
+
+        # load the model
+        self.load_model(arch, weights)
+
+        sample_imgs_alpha = X_test_gt[idx]
+
+        corners = (ycoor_test[idx], xcoor_test[idx])
+        masked_imgs, boolean_masks, mask_coordinates = self.mask_randomly(sample_imgs_alpha[:,:,:,:3],
+                                                                            random=False,corner=corners)
+        boolean_inverted = np.invert(boolean_masks)
+
+        _, gen_imgs = self.model.predict([masked_imgs,boolean_masks,boolean_inverted])
+        gen_imgs_alpha = sample_imgs_alpha.copy()
+        gen_imgs_alpha[:,:,:,:3] = gen_imgs
+
+        WITH_ALPHA = False
+
+        for i,index in enumerate(idx):
+            print('Saved image: ccgan-%s.png'%index)
+            if WITH_ALPHA:
+                scipy.misc.imsave('sample_output/ccgan-%s.png'%index, gen_imgs_alpha[i])
+            else:
+                scipy.misc.imsave('sample_output/ccgan-%s.png'%index, gen_imgs[i])
 
     def sample_images(self, epoch, imgs):
         """ saves sample images of the generator """
         r, c = 4, 6
 
         LR_imgs = np.array([scipy.misc.imresize(x, [self.img_rows//4, self.img_cols//4]) for x in imgs])
-        masked_imgs,boolean_masks,mask_coordinates = self.mask_randomly(imgs,random=True)
+        masked_imgs,boolean_masks,_ = self.mask_randomly(imgs,random=True)
         boolean_inverted = np.invert(boolean_masks)
 
         # orig_gen = no patch
@@ -439,18 +540,26 @@ class CCGAN():
 
 if __name__ == '__main__':
     ccgan = CCGAN()
-    MODE = 'train'
-    ARCH = './saved_model/ccgan_generator.json'
-    WEIGHTS = './saved_model/ccgan_generator_weights.220.hdf5'
+    MODE = 'predict'
+    ARCH = './ccgan_noLR/saved_model/ccgan_generator.json'
+    WEIGHTS = './ccgan_noLR/saved_model/ccgan_generator_weights.32000.hdf5'
     mode = {'train': 0,
             'test': 1,
             'predict': 2}
 
     if mode[MODE] == 0:
-        ccgan.train(epochs=30000, batch_size=32, sample_interval=50)
+        ccgan.train(epochs=60000, batch_size=32, sample_interval=50)
 
     elif mode[MODE] == 1:
-        pass
+        ccgan.test(batch_size=10,
+                vehicle = 'motorcycle',
+                arch = ARCH,
+                weights = WEIGHTS)
 
     elif mode[MODE] == 2:
-        pass
+        car_indices = np.array([2,9,28,37,42,51,62,63,64,67,83,90,91,105,109,133,139,147,192,203])
+        motor_indices = np.arange(20)
+        ccgan.predict(vehicle='car',
+                      arch=ARCH,
+                      weights=WEIGHTS,
+                      idx=car_indices)

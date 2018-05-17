@@ -2,3 +2,5 @@
 *.h5
 *.json
 *.hdf5
+*.npz
+*.txt
