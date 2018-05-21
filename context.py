@@ -27,6 +27,9 @@ MEAN_VIGNET_TRAIN = np.array([8.25, 7.66, 6.855])
 MEAN_VIGNET_TRAIN_NORM = (MEAN_VIGNET_TRAIN) / 255.0
 MEAN_VIGNET_TRAIN_NORM = (2 * MEAN_VIGNET_TRAIN_NORM) - 1
 
+
+
+
 def compute_mse(a,b):
     A = a.astype('float32').flatten()
     B = b.astype('float32').flatten()
@@ -279,6 +282,7 @@ class CEncoder():
                 self.save_model(epoch)
 
 
+
     def test(self, batch_size=10,vehicle='car', arch='a.json', weights='a.hdf5'):
         """ Produce same images (patch places) in data """
         PATH_TO_DATA = './wpatch/' + vehicle + '_wpatch.test.npz'
@@ -287,9 +291,10 @@ class CEncoder():
         X_test_crops = vignet['crops']
         xcoor_test = vignet['xs']
         ycoor_test = vignet['ys']
+        vignet.close()
 
         # Rescale possible rescale
-        X_test_gt = np.array([misc.imresize(x, [self.img_rows, self.img_cols]) for x in X_test_gt]) # resize to (128,128)
+        X_test_gt = np.array([misc.imresize(x, [128,128]) for x in X_test_gt]) # resize to (128,128)
 
         # Rescale -1 to 1
         X_test_crops = X_test_crops.astype('float32') / 255.0
@@ -324,7 +329,8 @@ class CEncoder():
 
             for j in range(len(batch)):
                 gen_imgs_alpha[j,corners[0][j]:corners[0][j]+64,
-                                 corners[1][j]:corners[1][j]+64,:3] = gen_missing[j]
+                                 corners[1][j]:corners[1][j]+64,
+                                 :3] = gen_missing[j]
 
             scipy.misc.imsave('images_test/sample-%s.png'%i,gen_imgs_alpha[0])
 
@@ -343,6 +349,8 @@ class CEncoder():
         print( "SSIM(image): ",np.array(ssim_image).mean() )
         print( "MSE (patch): ",np.array(mse_patch).mean()  )
         print( "SSIM(patch): ",np.array(ssim_patch).mean() )
+
+        K.clear_session()
 
     def predict(self,vehicle='car', arch='a.json', weights='a.hdf5',idx=1):
         PATH_TO_DATA = './wpatch/' + vehicle + '_wpatch.test.npz'
@@ -384,6 +392,9 @@ class CEncoder():
                 scipy.misc.imsave('sample_output/context-%s.png'%index, gen_imgs_alpha[i])
             else:
                 scipy.misc.imsave('sample_output/context-%s.png'%index, gen_imgs[i])
+                #scipy.misc.imsave('sample_output/original-%s.png'%index, sample_imgs_alpha[i,:,:,:3])
+
+        K.clear_session()
 
     def sample_images(self, epoch, imgs):
         r, c = 3, 6
@@ -434,25 +445,27 @@ class CEncoder():
 
 if __name__ == '__main__':
     ce = CEncoder()
-    MODE = 'predict'
+    MODE = 'test'
     ARCH = './context/saved_model/context_generator.json'
-    WEIGHTS = './context/saved_model/context_generator_weights.20000.hdf5'
+    WEIGHTS = './context/saved_model/context_generator_weights.93000.hdf5'
     mode = {'train': 0,
             'test': 1,
             'predict': 2}
 
     if mode[MODE] == 0:
-        ce.train(epochs=30000, batch_size=32, sample_interval=50)
+        ce.train(epochs=100000, batch_size=32, sample_interval=50)
+
     elif mode[MODE] == 1:
-        ce.test(batch_size=10,
-                vehicle = 'car',
-                arch = ARCH,
-                weights = WEIGHTS)
+        ce.test(batch_size=100,
+            vehicle = 'car',
+            arch = ARCH,
+            weights = WEIGHTS)
 
     elif mode[MODE] == 2:
-        car_indices = np.array([2,9,28,37,42,51,62,63,64,67,83,90,91,105,109,133,139,147,192,203])
-        motor_indices = np.arange(20)
-        ce.predict(vehicle='car',
+        index = {'car': np.array([2,9,28,37,42,51,62,63,64,67,83,90,91,105,109,133,139,147,192,203]),
+                 'motorcycle': np.arange(20)}
+        vehicle = 'motorcycle'
+        ce.predict(vehicle=vehicle,
                   arch=ARCH,
                   weights=WEIGHTS,
-                  idx=car_indices)
+                  idx=index[vehicle])

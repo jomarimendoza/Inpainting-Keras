@@ -521,7 +521,7 @@ class CCGAN():
             model_path = "saved_model/%s.json" % model_name
             weights_path = "saved_model/%s_weights.%s.hdf5" % (model_name,str(epoch))
             options = {"file_arch": model_path,
-                        "file_weight": weights_path}
+                       "file_weight": weights_path}
             json_string = model.to_json()
             open(options['file_arch'], 'w').write(json_string)
             model.save_weights(options['file_weight'])
@@ -537,10 +537,9 @@ class CCGAN():
         self.model = model_from_json(loaded_model_json)
         self.model.load_weights(weights)
 
-
 if __name__ == '__main__':
     ccgan = CCGAN()
-    MODE = 'predict'
+    MODE = 'test'
     ARCH = './ccgan_noLR/saved_model/ccgan_generator.json'
     WEIGHTS = './ccgan_noLR/saved_model/ccgan_generator_weights.32000.hdf5'
     mode = {'train': 0,
@@ -551,15 +550,16 @@ if __name__ == '__main__':
         ccgan.train(epochs=60000, batch_size=32, sample_interval=50)
 
     elif mode[MODE] == 1:
-        ccgan.test(batch_size=10,
+        ccgan.test(batch_size=337,
                 vehicle = 'motorcycle',
                 arch = ARCH,
                 weights = WEIGHTS)
 
     elif mode[MODE] == 2:
-        car_indices = np.array([2,9,28,37,42,51,62,63,64,67,83,90,91,105,109,133,139,147,192,203])
-        motor_indices = np.arange(20)
-        ccgan.predict(vehicle='car',
-                      arch=ARCH,
-                      weights=WEIGHTS,
-                      idx=car_indices)
+        index = {'car': np.array([2,9,28,37,42,51,62,63,64,67,83,90,91,105,109,133,139,147,192,203]),
+                 'motorcycle': np.arange(20)}
+        vehicle = 'motorcycle'
+        ccgan.predict(vehicle=vehicle,
+                  arch=ARCH,
+                  weights=WEIGHTS,
+                  idx=index[vehicle])
