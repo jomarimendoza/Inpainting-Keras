@@ -161,8 +161,8 @@ class CCGAN():
         y = deconv_bn_relu(y,filters=self.df*2,activation='relu')
         y = deconv_bn_relu(y,filters=self.df,activation='relu')
 
-        output_img = Conv2DTranspose(filters=self.channels, kernel_size=4, strides=2, padding='same')(y)
-        ouptut_img = Activation('tanh')(output_img)
+        y = Conv2DTranspose(filters=self.channels, kernel_size=4, strides=2, padding='same')(y)
+        output_img = Activation('tanh')(y)
 
         layer_patch =  Multiply()([img,revmask])
         layer_notPatch = Multiply()([output_img,mask])
@@ -447,7 +447,7 @@ if __name__ == '__main__':
             'predict': 2}
 
     if mode[MODE] == 0:
-        ccgan.train(epochs=30000, batch_size=32, sample_interval=50)
+        ccgan.train(epochs=50000, batch_size=32, sample_interval=50)
 
     elif mode[MODE] == 1:
         pass

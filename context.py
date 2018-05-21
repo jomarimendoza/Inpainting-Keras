@@ -123,8 +123,8 @@ class CEncoder():
         y = deconv_bn_relu(y,filters=self.df*2,activation='relu')
         y = deconv_bn_relu(y,filters=self.df,activation='relu')
 
-        output = Conv2DTranspose(3,kernel_size=4,strides=2,padding='same')(y)
-        ouptut = Activation('tanh')(output)
+        y = Conv2DTranspose(3,kernel_size=4,strides=2,padding='same')(y)
+        output = Activation('tanh')(y)
 
         model = Model(input,output)
         model.summary()
@@ -309,7 +309,7 @@ if __name__ == '__main__':
             'predict': 2}
 
     if mode[MODE] == 0:
-        ce.train(epochs=30000, batch_size=32, sample_interval=50)
+        ce.train(epochs=50000, batch_size=32, sample_interval=50)
 
     elif mode[MODE] == 1:
         pass
