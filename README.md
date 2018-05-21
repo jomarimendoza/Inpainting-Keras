@@ -13,7 +13,7 @@ python context.py
 ```
 **Example**
 
-![](sample_images/context.jpg)
+![](sample_images/con.jpg)
 
 
 ```python
